@@ -15,51 +15,76 @@ class rocket {
         float z{};
     };
 
+    double dx = 0.001;
+    double grav{};
+
     xyz initialPos;
     xyz currentPos;
     xyz initialVel;
     xyz currentVel;
 
     public:
-    std::vector<xyz> pos0{};
-    std::vector<xyz> vel0{};
+    std::vector<xyz> pos{};
+    std::vector<xyz> vel{};
 
     void getInitialPos() {
-        std::cout << "\nWhat is the rockets x-coordniate (meters): ";
+        std::cout << "What is the rockets x-coordniate (meters): ";
         std::cin >> initialPos.x;
-        std::cout << "\nWhat is the rockets y-coordniate (meters): ";
+        std::cout << "What is the rockets y-coordniate (meters): ";
         std::cin >> initialPos.y;
-        std::cout << "\nWhat is the rockets z-coordniate (meters): ";
+        std::cout << "What is the rockets z-coordniate (meters): ";
         std::cin >> initialPos.z;
 
-        pos0.push_back(initialPos);
+        pos.push_back(initialPos);
     }
 
     void getInitialVel() {
-        std::cout << "\nWhat is the rockets x-vel (m/s): ";
+        std::cout << "What is the rockets x-vel (m/s): ";
         std::cin >> initialVel.x;
-        std::cout << "\nWhat is the rockets y-vel (m/s): ";
+        std::cout << "What is the rockets y-vel (m/s): ";
         std::cin >> initialVel.y;
-        std::cout << "\nWhat is the rockets z-vel (m/s): ";
+        std::cout << "What is the rockets z-vel (m/s): ";
         std::cin >> initialVel.z;
 
-        vel0.push_back(initialVel);
+        vel.push_back(initialVel);
     }
 
-    double getGravity(const std::vector<xyz>& positions) {
-        float grav{};
+    void updateState(const std::vector<xyz>& position, const std::vector<xyz>& velocity) {
 
-        grav = g*((earthRadius/(earthRadius + positions[0].z))*(earthRadius/(earthRadius + positions[0].z)));
-        return grav;
+        //The for loop iterates through the timestep so this number determines the accuracy of the model
+        for (size_t i = 0; i < 1000; i++) {
+            double gravity = g * std::pow(earthRadius / (earthRadius + pos[i].z), 2);
+
+            currentPos.x = position[i].x + velocity[i].x*dx;
+            currentPos.y = position[i].y + velocity[i].y*dx;
+            currentPos.z = position[i].z + velocity[i].z*dx - 0.5 * gravity * dx * dx;
+
+            currentVel.x = velocity[i].x;
+            currentVel.y = velocity[i].y;
+            currentVel.z = velocity[i].z - gravity * dx;
+ 
+            pos.push_back(currentPos);
+            vel.push_back(currentVel);
+        }
     }
-
 };
 
 int main() {
     rocket r;
     r.getInitialPos();
+    r.getInitialVel();
+    r.updateState(r.pos, r.vel);
 
-    std::cout << "grav: " << r.getGravity(r.pos0);
+
+    //Prints the position of the rocket at 10 Hz
+    for (size_t i=0; i<r.pos.size(); i+=100) {
+        std::cout << "\nPosition is:" << "(" 
+            << r.pos[i].x 
+            << "," << r.pos[i].y
+            << "," << r.pos[i].z << ")" 
+            << "\n";    
+        }
+
 
     return 0;
 }
