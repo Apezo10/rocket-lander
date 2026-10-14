@@ -3,6 +3,7 @@
 #include <vector>
 #include <algorithm>
 #include <iomanip>
+#include <fstream>
 
 
 
@@ -133,6 +134,47 @@ class rocket {
             }
         }
     }
+
+    void exportCSV(const std::string& filename) const {
+        std::ofstream file(filename);
+
+        if (!file.is_open()) {
+            std::cerr << "Error opening CSV file\n";
+            return;
+        }
+
+        file << "time,x,y,x,vx,vy,vz\n";
+
+        //Iterates through pos and vel every second and writes to csv
+        for (size_t i = 0; i<pos.size(); i+=1000) {
+            double time = i*dx;
+
+            file << time << ","
+             << pos[i].x << ","
+             << pos[i].y << ","
+             << pos[i].z << ","
+             << vel[i].x << ","
+             << vel[i].y << ","
+             << vel[i].z << "\n";
+        }
+
+        // Always include the final state
+        size_t last = pos.size() - 1;
+
+        if (last % 1000 != 0) {
+        file << last * dx << ","
+             << pos[last].x << ","
+             << pos[last].y << ","
+             << pos[last].z << ","
+             << vel[last].x << ","
+             << vel[last].y << ","
+             << vel[last].z << "\n";
+        }
+
+        file.close();
+
+        std::cout << "CSV File exported successfully!";
+    }
 };
 
 int main() {
@@ -145,7 +187,7 @@ int main() {
     r.updateState(e);
 
     //current position
-    for (int i = 0; i<r.pos.size(); i+=50) {
+    for (int i = 0; i<r.pos.size(); i+=100) {
         std::cout << std::fixed << std::setprecision(3);
 
         std::cout <<  "X pos: " << r.pos[i].x
@@ -155,6 +197,8 @@ int main() {
          << "\t" << "Y vel: " << r.vel[i].y 
          << "\t" << "Z vel: " << r.vel[i].z << "\n";
     }
+
+    r.exportCSV("Trajectory.csv");
 
     return 0;
 }
