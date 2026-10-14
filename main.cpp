@@ -95,7 +95,7 @@ class rocket {
     void updateState(const earth& e) {
 
         //The for loop iterates through the timestep so this number determines the accuracy of the model
-        for (size_t i = 0; i < 1000; i++) {
+        while (true) {
 
             //  1) Get gravity and air density as function of altitude
             double gravity = e.getGravity(currentPos.z);
@@ -159,6 +159,13 @@ int main() {
     return 0;
 }
 
-//--------------------------
-//NEXT STEP: Implemet aerodynamic drag and such other forces acting on the rocket. Also implement the surface of the planet so the rocket can actually hit the ground
+//---------------------------------------------------------
+//NEXT STEP: Implement and api call to open mateo for accurate weather measurements based on lattitude and longitude up to 30 km. 
+//           Use this to calculate accurate air desity for more precice drag measuremeents and wind measurements. For each api request,
+//           ask for a vertical set of data based on varying airpressures to get approximate altitudes. Use this metho to request 
+//           4 vertical regions which i can use to interpolate airpressure and wind based on rockets current xy (lat/long) pos. Only
+//           request another call if the xy pos of the rocket moves beyond the grid formed by the 4 vertical regions. This way, we are
+//           consistently using accurate data across the calculations.
+
+// Does not assume a change in angle of attack for now (trjectory planning will come in the future)
 //---------------------------------------------------------
