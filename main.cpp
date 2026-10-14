@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <iomanip>
 #include <fstream>
+#include <cstdlib>
+#include <cstdio>
 
 
 
@@ -143,7 +145,7 @@ class rocket {
             return;
         }
 
-        file << "time,x,y,x,vx,vy,vz\n";
+        file << "time,x,y,z,vx,vy,vz\n";
 
         //Iterates through pos and vel every second and writes to csv
         for (size_t i = 0; i<pos.size(); i+=1000) {
@@ -199,6 +201,7 @@ int main() {
     }
 
     r.exportCSV("Trajectory.csv");
+    std::system("python handleCSV.py");
 
     return 0;
 }
