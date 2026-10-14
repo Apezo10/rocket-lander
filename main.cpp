@@ -21,14 +21,15 @@ class earth {
     double getAirDensity(double altitude) const {
          return rho0 * std::exp(-std::max(0.0, altitude) / scaleHeight);
     }
-
-
-
 };
 
 
 class rocket {
     private:
+    static constexpr double diameter = 9.0;
+    static constexpr double pi = 3.141592653589793;
+    double area = pi * diameter * diameter / 4.0;
+
     struct xyz {
         double x{};
         double y{};
@@ -37,6 +38,8 @@ class rocket {
 
     double dx = 0.001;
     double grav{};
+    //Dry mass of startship booster in kg
+    double dryMass = 180000;
 
     xyz initialPos;
     xyz currentPos;
@@ -71,24 +74,63 @@ class rocket {
         vel.push_back(initialVel);
     }
 
+
+    //This calculates drag as a vector
+    auto getDrag(double rho, double Cd) {
+        xyz drag{};
+
+        double speed = sqrt(currentVel.x * currentVel.x +
+                            currentVel.y * currentVel.y +
+                            currentVel.z * currentVel.z);
+
+        double dragFactor = -0.5 * rho * Cd * area * speed;
+
+        drag.x = dragFactor * currentVel.x;
+        drag.y = dragFactor * currentVel.y;
+        drag.z = dragFactor * currentVel.z;
+
+        return drag;
+    }
+
     void updateState(const earth& e) {
 
         //The for loop iterates through the timestep so this number determines the accuracy of the model
         for (size_t i = 0; i < 1000; i++) {
 
+            //  1) Get gravity and air density as function of altitude
             double gravity = e.getGravity(currentPos.z);
+            double rho = e.getAirDensity(currentPos.z);
 
-            //Update position by integrating velocity in that direction
+            //  2) Get drag as function of density (USE 0.8 as Cd for now until we get accurate dynamic estimates)
+            xyz drag = getDrag(rho, 0.8);
+
+            // 3) Get accel
+            xyz accel{};
+            accel.x = drag.x / dryMass;
+            accel.y = drag.y / dryMass;
+            accel.z = drag.z / dryMass - gravity;
+
+            //  4) Update vel
+            currentVel.x += accel.x * dx;
+            currentVel.y += accel.y * dx;
+            currentVel.z += accel.z * dx;
+
+            //  5) Update pos
             currentPos.x += currentVel.x * dx;
             currentPos.y += currentVel.y * dx;
-            currentPos.z += currentVel.z * dx - 0.5 * gravity * dx * dx;
+            currentPos.z += currentVel.z * dx;
 
-            //Update velocity
-            currentVel.z -= gravity * dx;
- 
-            //Store updated trajectory
-            pos.push_back(currentPos);
+            //  6) store updated state
             vel.push_back(currentVel);
+            pos.push_back(currentPos);
+
+            //Run sim until altitude is 0
+            if (currentPos.z < 0.001) {
+                currentPos.z = 0;
+
+                pos.back() = currentPos;
+                break;
+            }
         }
     }
 };
@@ -108,7 +150,10 @@ int main() {
 
         std::cout <<  "X pos: " << r.pos[i].x
          << "\t" << "Y pos: " << r.pos[i].y 
-         << "\t" << "Z pos: " << r.pos[i].z << "\n";
+         << "\t" << "Z pos: " << r.pos[i].z 
+         << "\t\t" << "X vel: " << r.vel[i].x 
+         << "\t" << "Y vel: " << r.vel[i].y 
+         << "\t" << "Z vel: " << r.vel[i].z << "\n";
     }
 
     return 0;
