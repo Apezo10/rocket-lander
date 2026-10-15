@@ -31,7 +31,10 @@ class rocket {
     private:
     static constexpr double diameter = 9.0;
     static constexpr double pi = 3.141592653589793;
-    double area = pi * diameter * diameter / 4.0;
+    static constexpr double length = 124.4; //meters
+    //Mass will chnage once thrust is implemeted
+    static constexpr double mass = 100000; // kg
+    double frontArea = pi * diameter * diameter / 4.0;
 
     struct xyz {
         double x{};
@@ -41,13 +44,15 @@ class rocket {
 
     double dx = 0.001;
     double grav{};
-    //Dry mass of startship booster in kg
-    double dryMass = 180000;
 
     xyz initialPos;
     xyz currentPos;
     xyz initialVel;
     xyz currentVel;
+
+    double calculateInertia() {
+        return (mass / 12.0) * (3.0 * diameter/2.0 * diameter/2.0 + length * length);
+    }
 
     public:
     std::vector<xyz> pos{};
@@ -86,13 +91,17 @@ class rocket {
                             currentVel.y * currentVel.y +
                             currentVel.z * currentVel.z);
 
-        double dragFactor = -0.5 * rho * Cd * area * speed;
+        double dragFactor = -0.5 * rho * Cd * frontArea * speed;
 
         drag.x = dragFactor * currentVel.x;
         drag.y = dragFactor * currentVel.y;
         drag.z = dragFactor * currentVel.z;
 
         return drag;
+    }
+
+    double getInertia() {
+        return calculateInertia();
     }
 
     void updateState(const earth& e) {
@@ -109,9 +118,9 @@ class rocket {
 
             // 3) Get accel
             xyz accel{};
-            accel.x = drag.x / dryMass;
-            accel.y = drag.y / dryMass;
-            accel.z = drag.z / dryMass - gravity;
+            accel.x = drag.x / mass;
+            accel.y = drag.y / mass;
+            accel.z = drag.z / mass - gravity;
 
             //  4) Update vel
             currentVel.x += accel.x * dx;
@@ -199,6 +208,8 @@ int main() {
          << "\t" << "Y vel: " << r.vel[i].y 
          << "\t" << "Z vel: " << r.vel[i].z << "\n";
     }
+
+    std::cout << "\n\nMoment of inertia: " << r.getInertia() << "\n";
 
     r.exportCSV("Trajectory.csv");
     std::system("python handleCSV.py");

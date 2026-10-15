@@ -1,6 +1,7 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
+import numpy
 
 # Load simulation data
 csv_path = Path("Trajectory.csv")
@@ -43,9 +44,9 @@ ax1.grid(True)
 
 ax2 = fig.add_subplot(2, 2, 2)
 
-ax2.plot(time, vx, label="X Velocity")
-ax2.plot(time, vy, label="Y Velocity")
-ax2.plot(time, vz, label="Z Velocity")
+ax2.plot(time, numpy.sqrt(vx*vx + vy*vy + vz*vz), label="Velocity")
+#5ax2.plot(time, vy, label="Y Velocity")
+#ax2.plot(time, vz, label="Z Velocity")
 
 ax2.set_xlabel("Time (s)")
 ax2.set_ylabel("Velocity (m/s)")
