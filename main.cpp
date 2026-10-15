@@ -32,6 +32,7 @@ class rocket {
     static constexpr double diameter = 9.0;
     static constexpr double pi = 3.141592653589793;
     static constexpr double length = 124.4; //meters
+
     //Mass will chnage once thrust is implemeted
     static constexpr double mass = 100000; // kg
     double frontArea = pi * diameter * diameter / 4.0;
@@ -42,7 +43,20 @@ class rocket {
         double z{};
     };
 
-    double dx = 0.001;
+    struct inertia {
+        double Ixx{};
+        double Iyy{};
+        double Izz{};
+    };
+
+    struct quaternion {
+        double w{1.0};
+        double x{0.0};
+        double y{0.0};
+        double z{0.0};
+    };
+
+    double dt = 0.001;
     double grav{};
 
     xyz initialPos;
@@ -50,13 +64,46 @@ class rocket {
     xyz initialVel;
     xyz currentVel;
 
-    double calculateInertia() {
-        return (mass / 12.0) * (3.0 * diameter/2.0 * diameter/2.0 + length * length);
+    xyz angularVelocity{};
+    xyz angularAcceleration{};
+    xyz torque{};
+
+
+    double calculateInertiaPY() {
+        return (1.0 / 12.0) * mass * (length * length) + (1.0/4.0) * mass * ((diameter/2.0) * (diameter/2.0));
     }
+
+    double calculateInertiaR() {
+        return (1.0/2.0) * mass * ((diameter/2.0) * (diameter/2.0));
+    }
+
+    quaternion qMultiply(const quaternion& a, const quaternion& b) {
+        return {
+                a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z,
+
+                a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y,
+
+                a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x,
+
+                a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w
+            };
+    }
+
+    //initializes orientation in the upward position
+    quaternion orientation{std::sqrt(0.5),0.0,-std::sqrt(0.5),0.0};
+
+    //innitalize moment of inertia in roll, pitch, and yaw
+    inertia rocketInertia{
+        calculateInertiaR(),
+        calculateInertiaPY(),
+        calculateInertiaPY()
+    };
 
     public:
     std::vector<xyz> pos{};
     std::vector<xyz> vel{};
+    std::vector<xyz> angularVel{};
+    std::vector<quaternion> orientations{};
 
     void getInitialPos() {
         std::cout << "What is the rockets x-coordniate (meters): ";
@@ -100,13 +147,71 @@ class rocket {
         return drag;
     }
 
-    double getInertia() {
-        return calculateInertia();
+    // Moment of inertia for pitch and yaw axis
+    double getInertiaPY() {
+        return calculateInertiaPY();
     }
+
+    //Moment of inertia for roll axis
+    double getInertiaR() {
+        return calculateInertiaR();
+    }
+
+    void calculateAngularAccel() {
+        double p = angularVelocity.x;
+        double q = angularVelocity.y;
+        double r = angularVelocity.z;
+
+        angularAcceleration.x = (torque.x + 
+                                (rocketInertia.Iyy - rocketInertia.Izz)
+                                 * q * r) / rocketInertia.Ixx;
+                                
+        angularAcceleration.y = (torque.y + 
+                                (rocketInertia.Izz - rocketInertia.Ixx)
+                                 * r * p) / rocketInertia.Iyy;
+                                 
+        angularAcceleration.z = (torque.z + 
+                                (rocketInertia.Ixx - rocketInertia.Iyy)
+                                 * p * q) / rocketInertia.Izz;
+    }
+
+    void updateAngularrVel(double dt) {
+        angularVelocity.x += angularAcceleration.x * dt;
+        angularVelocity.y += angularAcceleration.y * dt;
+        angularVelocity.z += angularAcceleration.z * dt;
+    }
+
+    void updateOrientation(double dt) {
+
+        quaternion omegaQuat{0.0, angularVelocity.x, angularVelocity.y, angularVelocity.z};
+
+        quaternion qDot = qMultiply(orientation, omegaQuat);
+
+        orientation.w += 0.5 * qDot.w * dt;
+        orientation.x += 0.5 * qDot.x * dt;
+        orientation.y += 0.5 * qDot.y * dt;
+        orientation.z += 0.5 * qDot.z * dt;
+
+        //normalize
+        double norm = std::sqrt(
+                orientation.w * orientation.w +
+                orientation.x * orientation.x +
+                orientation.y * orientation.y +
+                orientation.z * orientation.z
+            );
+
+        orientation.w /= norm;
+        orientation.x /= norm;
+        orientation.y /= norm;
+        orientation.z /= norm;
+    }
+
 
     void updateState(const earth& e) {
 
-        //The for loop iterates through the timestep so this number determines the accuracy of the model
+        angularVel.push_back(angularVelocity);
+        orientations.push_back(orientation);
+
         while (true) {
 
             //  1) Get gravity and air density as function of altitude
@@ -121,20 +226,25 @@ class rocket {
             accel.x = drag.x / mass;
             accel.y = drag.y / mass;
             accel.z = drag.z / mass - gravity;
+            calculateAngularAccel();
 
             //  4) Update vel
-            currentVel.x += accel.x * dx;
-            currentVel.y += accel.y * dx;
-            currentVel.z += accel.z * dx;
+            currentVel.x += accel.x * dt;
+            currentVel.y += accel.y * dt;
+            currentVel.z += accel.z * dt;
+            updateAngularrVel(dt);
 
             //  5) Update pos
-            currentPos.x += currentVel.x * dx;
-            currentPos.y += currentVel.y * dx;
-            currentPos.z += currentVel.z * dx;
+            currentPos.x += currentVel.x * dt;
+            currentPos.y += currentVel.y * dt;
+            currentPos.z += currentVel.z * dt;
+            updateOrientation(dt);
 
             //  6) store updated state
             vel.push_back(currentVel);
             pos.push_back(currentPos);
+            angularVel.push_back(angularVelocity);
+            orientations.push_back(orientation);
 
             //Run sim until altitude is 0
             if (currentPos.z < 0.001) {
@@ -154,39 +264,49 @@ class rocket {
             return;
         }
 
-        file << "time,x,y,z,vx,vy,vz\n";
+        file << "time,x,y,z,vx,vy,vz,p,q,r,qw,qx,qy,qz\n";
 
         //Iterates through pos and vel every second and writes to csv
-        for (size_t i = 0; i<pos.size(); i+=1000) {
-            double time = i*dx;
+        auto writeRow = [&](size_t i) {
+            double time = i*dt;
 
             file << time << ","
              << pos[i].x << ","
              << pos[i].y << ","
              << pos[i].z << ","
+
              << vel[i].x << ","
              << vel[i].y << ","
-             << vel[i].z << "\n";
+             << vel[i].z << ","
+             
+             << angularVel[i].x << ","
+             << angularVel[i].y << ","
+             << angularVel[i].z << ","
+             
+             << orientations[i].w << ","
+             << orientations[i].x << ","
+             << orientations[i].y << ","
+             << orientations[i].z << "\n";
+        };
+
+         // Export every second
+        for (size_t i = 0; i < pos.size(); i += 1000) {
+            writeRow(i);
         }
 
-        // Always include the final state
+        // Export final state
         size_t last = pos.size() - 1;
 
         if (last % 1000 != 0) {
-        file << last * dx << ","
-             << pos[last].x << ","
-             << pos[last].y << ","
-             << pos[last].z << ","
-             << vel[last].x << ","
-             << vel[last].y << ","
-             << vel[last].z << "\n";
+            writeRow(last);
         }
 
         file.close();
 
-        std::cout << "CSV File exported successfully!";
-    }
+        std::cout << "CSV File exported successfully!\n";
+        }
 };
+
 
 int main() {
     rocket r;
@@ -209,7 +329,6 @@ int main() {
          << "\t" << "Z vel: " << r.vel[i].z << "\n";
     }
 
-    std::cout << "\n\nMoment of inertia: " << r.getInertia() << "\n";
 
     r.exportCSV("Trajectory.csv");
     std::system("python handleCSV.py");
