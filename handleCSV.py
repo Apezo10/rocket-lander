@@ -17,7 +17,7 @@ gif_file = folder / "RocketOrientation.gif"
 length = 124.4       # meters
 radius = 9.0 / 2.0    # meters
 fps = 20
-playback_speed = 15  # simulation seconds per GIF second
+playback_speed = 20  # simulation seconds per GIF second
 max_frames = 400
 
 
@@ -26,7 +26,6 @@ data = np.genfromtxt(csv_file, delimiter=",", names=True)
 data = np.atleast_1d(data)
 
 columns = ["time", "x", "y", "z", "qw", "qx", "qy", "qz"]
-
 if data.dtype.names is None or not all(name in data.dtype.names for name in columns):
     raise ValueError("Trajectory.csv needs time, position, and quaternion columns.")
 
@@ -34,19 +33,8 @@ if len(data) < 2:
     raise ValueError("Trajectory.csv needs at least two data rows.")
 
 time = data["time"]
-
-position = np.column_stack((
-    data["x"],
-    data["y"],
-    data["z"]
-))
-
-quaternion = np.column_stack((
-    data["qw"],
-    data["qx"],
-    data["qy"],
-    data["qz"]
-))
+position = np.column_stack((data["x"], data["y"], data["z"]))
+quaternion = np.column_stack((data["qw"], data["qx"], data["qy"], data["qz"]))
 
 if not np.all(np.isfinite(time)) or not np.all(np.isfinite(position)) or not np.all(np.isfinite(quaternion)):
     raise ValueError("The CSV contains invalid numbers.")
@@ -55,21 +43,17 @@ if np.any(np.diff(time) <= 0):
     raise ValueError("CSV times must increase.")
 
 q_length = np.linalg.norm(quaternion, axis=1)
-
 if np.any(q_length < 1e-12):
     raise ValueError("A quaternion in the CSV is zero.")
-
 quaternion = quaternion / q_length[:, None]
 
 
 # Quaternion functions
 def get_quaternion(t):
-
     i = np.searchsorted(time, t) - 1
     i = int(np.clip(i, 0, len(time) - 2))
 
     fraction = (t - time[i]) / (time[i + 1] - time[i])
-
     q0 = quaternion[i]
     q1 = quaternion[i + 1].copy()
 
@@ -82,20 +66,14 @@ def get_quaternion(t):
 
     if dot > 0.9995:
         q = (1 - fraction) * q0 + fraction * q1
-
     else:
         angle = np.arccos(np.clip(dot, -1, 1))
-
-        q = (
-            np.sin((1 - fraction) * angle) * q0
-            + np.sin(fraction * angle) * q1
-        ) / np.sin(angle)
+        q = (np.sin((1 - fraction) * angle) * q0 + np.sin(fraction * angle) * q1) / np.sin(angle)
 
     return q / np.linalg.norm(q)
 
 
 def get_rotation(q):
-
     w, x, y, z = q
 
     return np.array([
@@ -109,9 +87,7 @@ def get_rotation(q):
 segments = 24
 angles = np.linspace(0, 2*np.pi, segments, endpoint=False)
 
-
 def make_ring(x):
-
     return np.column_stack((
         np.full(segments, x),
         radius * np.cos(angles),
@@ -127,32 +103,15 @@ nose_faces = []
 tail_faces = []
 
 for i in range(segments):
-
     j = (i + 1) % segments
 
-    side_faces.append([
-        tail_ring[i],
-        tail_ring[j],
-        nose_ring[j],
-        nose_ring[i]
-    ])
-
-    nose_faces.append([
-        [length / 2, 0, 0],
-        nose_ring[i],
-        nose_ring[j]
-    ])
-
-    tail_faces.append([
-        [-length / 2, 0, 0],
-        tail_ring[j],
-        tail_ring[i]
-    ])
+    side_faces.append([tail_ring[i], tail_ring[j], nose_ring[j], nose_ring[i]])
+    nose_faces.append([[length / 2, 0, 0], nose_ring[i], nose_ring[j]])
+    tail_faces.append([[-length / 2, 0, 0], tail_ring[j], tail_ring[i]])
 
 side_faces = np.array(side_faces)
 nose_faces = np.array(nose_faces)
 tail_faces = np.array(tail_faces)
-
 
 # A stripe makes rolling visible on the cylinder
 stripe = np.array([
@@ -162,35 +121,19 @@ stripe = np.array([
 
 
 def add_rocket(ax):
-
-    body = Poly3DCollection(
-        side_faces,
-        facecolor="silver",
-        edgecolor="gray",
-        linewidth=0.3
-    )
-
-    nose = Poly3DCollection(
-        nose_faces,
-        facecolor="black"
-    )
-
-    tail = Poly3DCollection(
-        tail_faces,
-        facecolor="dimgray"
-    )
+    body = Poly3DCollection(side_faces, facecolor="silver", edgecolor="gray", linewidth=0.3)
+    nose = Poly3DCollection(nose_faces, facecolor="red")
+    tail = Poly3DCollection(tail_faces, facecolor="dimgray")
 
     ax.add_collection3d(body)
     ax.add_collection3d(nose)
     ax.add_collection3d(tail)
 
     line, = ax.plot([], [], [], color="orange", linewidth=3)
-
     return body, nose, tail, line
 
 
 def move_rocket(artists, rotation, center, scale=1.0):
-
     body, nose, tail, line = artists
 
     body.set_verts((side_faces @ rotation.T) * scale + center)
@@ -198,147 +141,171 @@ def move_rocket(artists, rotation, center, scale=1.0):
     tail.set_verts((tail_faces @ rotation.T) * scale + center)
 
     stripe_points = (stripe @ rotation.T) * scale + center
-
     line.set_data(stripe_points[:, 0], stripe_points[:, 1])
     line.set_3d_properties(stripe_points[:, 2])
 
-
+#------------------------------------------------------------------------------------------------------------
 # Animation time and trajectory
 flight_time = time[-1] - time[0]
-
-frame_count = min(
-    max_frames,
-    max(2, int(flight_time * fps / playback_speed) + 1)
-)
-
+frame_count = min(max_frames, max(2, int(flight_time * fps / playback_speed) + 1))
 frame_times = np.linspace(time[0], time[-1], frame_count)
 
 trajectory = position / 1000  # km
-
 frame_positions = np.column_stack([
-    np.interp(frame_times, time, position[:, i]) / 1000
-    for i in range(3)
+    np.interp(frame_times, time, position[:, i]) / 1000 for i in range(3)
 ])
 
 
 # Set up the two 3D views
 fig = plt.figure(figsize=(13, 6.5))
-
 ax_path = fig.add_subplot(121, projection="3d")
 ax_body = fig.add_subplot(122, projection="3d")
+fig.subplots_adjust(left=0.02, right=0.98, top=0.87, bottom=0.07, wspace=0.08)
 
-fig.subplots_adjust(
-    left=0.02,
-    right=0.98,
-    top=0.87,
-    bottom=0.07,
-    wspace=0.08
-)
-
-ax_path.plot(
-    trajectory[:, 0],
-    trajectory[:, 1],
-    trajectory[:, 2],
-    color="lightgray"
-)
-
+ax_path.plot(trajectory[:, 0], trajectory[:, 1], trajectory[:, 2], color="lightgray")
 trail, = ax_path.plot([], [], [], color="blue", linewidth=2)
-
 path_rocket = add_rocket(ax_path)
 body_rocket = add_rocket(ax_body)
-
 
 # Keep the trajectory axes fixed as the rocket moves
 span = np.ptp(trajectory, axis=0)
 max_span = max(np.max(span), 0.1)
-
-center = (
-    np.max(trajectory, axis=0)
-    + np.min(trajectory, axis=0)
-) / 2
-
+center = (np.max(trajectory, axis=0) + np.min(trajectory, axis=0)) / 2
 half_range = np.maximum(span / 2, 0.2 * max_span)
 
 ax_path.set_xlim(center[0] - half_range[0], center[0] + half_range[0])
 ax_path.set_ylim(center[1] - half_range[1], center[1] + half_range[1])
 ax_path.set_zlim(center[2] - half_range[2], center[2] + half_range[2])
-
 ax_path.set_box_aspect(2 * half_range)
 ax_path.view_init(elev=20, azim=-63)
-
 ax_path.set_title("Rocket trajectory (rocket enlarged)")
-
 ax_path.set_xlabel("X (km)")
 ax_path.set_ylabel("Y (km)")
 ax_path.set_zlabel("Altitude (km)")
 
-
 # The close-up uses the cylinder's real size and proportions
 zoom = 0.6 * length
-
 ax_body.set_xlim(-zoom, zoom)
 ax_body.set_ylim(-zoom, zoom)
 ax_body.set_zlim(-zoom, zoom)
-
 ax_body.set_box_aspect((1, 1, 1))
 ax_body.view_init(elev=23, azim=-55)
-
 ax_body.set_title("Rocket orientation (true dimensions)")
-
 ax_body.set_xlabel("X (m)")
 ax_body.set_ylabel("Y (m)")
 ax_body.set_zlabel("Z (m)")
 
-
 # Only the trajectory-view rocket is enlarged so it can be seen from far away
 path_scale = 0.13 * max_span / length
-
 actual_speed = flight_time * fps / (frame_count - 1)
-
 title = fig.suptitle("")
 
 
 def update(frame):
-
     rotation = get_rotation(get_quaternion(frame_times[frame]))
     rocket_pos = frame_positions[frame]
 
     move_rocket(path_rocket, rotation, rocket_pos, path_scale)
     move_rocket(body_rocket, rotation, np.zeros(3))
 
-    trail.set_data(
-        frame_positions[:frame + 1, 0],
-        frame_positions[:frame + 1, 1]
-    )
-
-    trail.set_3d_properties(
-        frame_positions[:frame + 1, 2]
-    )
+    trail.set_data(frame_positions[:frame + 1, 0], frame_positions[:frame + 1, 1])
+    trail.set_3d_properties(frame_positions[:frame + 1, 2])
 
     title.set_text(
         f"Time: {frame_times[frame]:.1f} s   |   "
         f"Altitude: {rocket_pos[2]:.2f} km   |   "
         f"Playback: {actual_speed:.1f}x"
     )
+#------------------------------------------------------------------------------------------------------------
 
 
-# Generate GIF
-animation = FuncAnimation(
-    fig,
-    update,
-    frames=frame_count,
-    interval=1000 / fps,
-    blit=False
-)
+
+#------------------------------------------------------------------------------------------------------------
+# Plot flight and attitude data
+def plotFlightData():
+
+    needed = ("vx", "vy", "vz", "p", "q", "r")
+    if not all(name in data.dtype.names for name in needed):
+        raise ValueError("CSV needs vx, vy, vz, p, q, and r for the plots.")
+
+    vx = data["vx"]
+    vy = data["vy"]
+    vz = data["vz"]
+    speed = np.sqrt(vx**2 + vy**2 + vz**2)
+    altitude = data["z"] / 1000.0
+
+    qw = quaternion[:, 0]
+    qx = quaternion[:, 1]
+    qy = quaternion[:, 2]
+    qz = quaternion[:, 3]
+
+    # Body +X is the nose direction. Find its world Z component.
+    nose_z = 2.0 * (qx*qz - qw*qy)
+    tilt = np.degrees(np.arccos(np.clip(nose_z, -1.0, 1.0)))
+
+    # Angular rates are body-frame p, q, r in rad/s.
+    roll_rate = np.degrees(data["p"])
+    pitch_rate = np.degrees(data["q"])
+    yaw_rate = np.degrees(data["r"])
+
+    fig, axes = plt.subplots(3, 2, figsize=(14, 12))
+
+    axes[0, 0].plot(time, altitude, linewidth=2)
+    axes[0, 0].set_title("Altitude vs. Time")
+    axes[0, 0].set_ylabel("Altitude (km)")
+
+    axes[0, 1].plot(time, vx, label="Vx")
+    axes[0, 1].plot(time, vy, label="Vy")
+    axes[0, 1].plot(time, vz, label="Vz")
+    axes[0, 1].set_title("Velocity Components vs. Time")
+    axes[0, 1].set_ylabel("Velocity (m/s)")
+    axes[0, 1].legend()
+
+    axes[1, 0].plot(time, speed, linewidth=2)
+    axes[1, 0].set_title("Velocity Magnitude vs. Time")
+    axes[1, 0].set_ylabel("Speed (m/s)")
+
+    axes[1, 1].plot(time, tilt, linewidth=2, label="Tilt from upward vertical")
+    axes[1, 1].axhline(90, linestyle="--", linewidth=1, color="gray")
+    axes[1, 1].set_ylim(0, 180)
+    axes[1, 1].set_yticks(np.arange(0, 181, 30))
+    axes[1, 1].set_title("Rocket Tilt vs. Time")
+    axes[1, 1].set_ylabel("Tilt (degrees)")
+
+    axes[2, 0].plot(time, roll_rate, label="p (roll rate)")
+    axes[2, 0].plot(time, pitch_rate, label="q (pitch rate)")
+    axes[2, 0].plot(time, yaw_rate, label="r (yaw rate)")
+    axes[2, 0].set_title("Body Angular Velocity vs. Time")
+    axes[2, 0].set_ylabel("Angular rate (deg/s)")
+    axes[2, 0].legend()
+
+    axes[2, 1].axis("off")
+    axes[2, 1].text(
+        0.05, 0.75,
+        "Tilt = 0°: nose up\nTilt = 90°: horizontal\nTilt = 180°: nose down\n\n"
+        "p, q, r are angular rates, not Euler angles.",
+        transform=axes[2, 1].transAxes, fontsize=12, va="top"
+    )
+
+    for ax in axes.flat:
+        if ax.axison:
+            ax.set_xlabel("Time (s)")
+            ax.grid(True, alpha=0.4)
+
+    fig.tight_layout()
+    fig.savefig(folder / "FlightData.png", dpi=220)
+    plt.close(fig)
+    print("Saved: FlightData.png")
+#------------------------------------------------------------------------------------------------------------
+
+# PLOT FLIGHT DATA
+plotFlightData()
+
+# GENERATE GIF
+animation = FuncAnimation(fig, update, frames=frame_count, interval=1000 / fps, blit=False)
 
 print(f"Creating {gif_file.name} ({frame_count} frames)...")
-
-animation.save(
-    gif_file,
-    writer=PillowWriter(fps=fps),
-    dpi=85
-)
-
+animation.save(gif_file, writer=PillowWriter(fps=fps), dpi=85)
 plt.close(fig)
 
 print(f"Saved: {gif_file}")
