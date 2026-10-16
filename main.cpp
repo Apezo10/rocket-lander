@@ -8,16 +8,40 @@
 #include <cstdio>
 
 
+//very helpful universal struct
+struct xyz {
+        double x{};
+        double y{};
+        double z{};
+    };
+
+
+
+
+// EARTH CLASS
+//---------------------------------------------------------------
 class earth {
     private:
-    static constexpr double g = 9.80665;
-    static constexpr double radius = 6371000.0;
+    static constexpr double mu = 3.986004418e14;
     static constexpr double rho0 = 1.225;
     static constexpr double scaleHeight = 8500.0;
 
     public:
-    double getGravity(double altitude) const {
-        return g * std::pow(radius / (radius + altitude), 2);
+    xyz getGravity(const xyz& pos) const {
+        
+        double r = std::sqrt(
+            pos.x*pos.x +
+            pos.y*pos.y +
+            pos.z*pos.z
+        );
+
+        double factor = -mu / (r*r*r);
+
+        return {
+            factor * pos.x,
+            factor * pos.y,
+            factor * pos.z
+        };
     }
 
     double getAirDensity(double altitude) const {
@@ -26,6 +50,10 @@ class earth {
 };
 
 
+
+
+//ROCKET CLASS
+//--------------------------------------------------------------------------
 class rocket {
     private:
     static constexpr double diameter = 9.0;
@@ -37,13 +65,7 @@ class rocket {
     double frontArea = pi * diameter * diameter / 4.0;
 
     double CoM = length/2.0;
-    double CoP = 40.0; // fixed for now
-
-    struct xyz {
-        double x{};
-        double y{};
-        double z{};
-    };
+    double CoP = length/2.0; // fixed for now
 
     struct inertia {
         double Ixx{};
@@ -56,6 +78,12 @@ class rocket {
         double x{0.0};
         double y{0.0};
         double z{0.0};
+    };
+
+    struct geographicPos {
+        double lattitude{};
+        double longitude{};
+        double altitude{};
     };
 
     struct aero {
@@ -74,6 +102,7 @@ class rocket {
     }
 
     double dt = 0.001;
+    double currentTime = 0.0;
 
     xyz initialPos;
     xyz currentPos;
@@ -112,6 +141,7 @@ class rocket {
     quaternion orientation{
         std::sqrt(0.5), 0.0, -std::sqrt(0.5), 0.0
     };
+
 
     //innitalize moment of inertia in roll, pitch, and yaw
     inertia rocketInertia{
@@ -168,6 +198,8 @@ class rocket {
 
         return rotateVector(v, qConjugate);
     };  
+
+    geographicPos latLongAlt;
     //------------------------------------------------------------------------------------
 
     public:
@@ -176,29 +208,272 @@ class rocket {
     std::vector<xyz> angularVel{};
     std::vector<quaternion> orientations{};
 
+
+    void getGeographicPos() {
+
+        std::cout << "What is the rockets initial lattitude: ";
+        std::cin >> latLongAlt.lattitude;
+        std::cout << "What is the rockeets initial longitude: ";
+        std::cin >> latLongAlt.longitude;
+        std::cout << "What is the rockets initial altitude (m): ";
+        std::cin >> latLongAlt.altitude; 
+    }
+
+    // This function takes the lat, lon, and alt of the rocket and converts it to xyz 
+    //along a spherical earth rather than flat earth approximation
+    xyz geographicToECEF() const {
+
+        constexpr double a = 6378137.0;
+        constexpr double f = 1.0 / 298.257223563;
+        constexpr double e2 = f * (2.0 - f);
+
+        double lat = latLongAlt.lattitude * pi / 180.0;
+        double lon = latLongAlt.longitude * pi / 180.0;
+        double h = latLongAlt.altitude;
+
+        double sinLat = std::sin(lat);
+        double cosLat = std::cos(lat);
+
+        double N = a / std::sqrt(1.0 -e2 * sinLat * sinLat);
+
+        return {
+            (N + h) * cosLat * std::cos(lon),
+            (N + h) * cosLat * std::sin(lon),
+            (N * (1.0 - e2) + h) * sinLat
+        };
+    }
+
+
+    xyz ECEFtoECI(const xyz& position, double time) const {
+
+        constexpr double earthOmega = 7.2921159e-5;
+
+        double theta = earthOmega * time;
+
+        double c = std::cos(theta);
+        double s = std::sin(theta);
+
+        return {
+            c * position.x - s * position.y,
+            s * position.x + c * position.y,
+            position.z
+        };
+    }
+
+
+    xyz ECItoECEF(const xyz& position, double time) const {
+
+        constexpr double earthOmega = 7.2921159e-5;
+
+        double theta = earthOmega * time;
+
+        double c = std::cos(theta);
+        double s = std::sin(theta);
+
+        return {
+            c * position.x + s * position.y,
+            -s * position.x + c * position.y,
+            position.z
+        };
+    }
+
+
+    geographicPos ECEFtoGeographic(const xyz& pos) const {
+
+        constexpr double a = 6378137.0;
+        constexpr double f = 1.0 / 298.257223563;
+        constexpr double e2 = f * (2.0 - f);
+
+        double x = pos.x;
+        double y = pos.y;
+        double z = pos.z;
+
+        double lon = std::atan2(y, x);
+
+        double p = std::sqrt(x*x + y*y);
+
+        // Iterative latitude calculation
+        double lat = std::atan2(z, p * (1.0 - e2));
+
+        double h = 0.0;
+
+        for (int i = 0; i < 10; i++) {
+
+            double sinLat = std::sin(lat);
+
+            double N = a /
+                std::sqrt(1.0 - e2*sinLat*sinLat);
+
+            double newLat = std::atan2(
+                z + e2*N*sinLat,
+                p
+            );
+
+            if (std::abs(newLat - lat) < 1e-12) {
+                lat = newLat;
+                break;
+            }
+
+            lat = newLat;
+        }
+
+        double sinLat = std::sin(lat);
+        double cosLat = std::cos(lat);
+
+        double N = a /
+            std::sqrt(1.0 - e2*sinLat*sinLat);
+
+        if (std::abs(cosLat) > 1e-8) {
+            h = p/cosLat - N;
+        } else {
+            h = std::abs(z) - N*(1.0 - e2);
+        }
+
+        return {
+            lat * 180.0/pi,
+            lon * 180.0/pi,
+            h
+        };
+    }
+
+
+    geographicPos getCurrentGeographicPos() const {
+
+        xyz ecef = ECItoECEF(currentPos, currentTime);
+
+        return ECEFtoGeographic(ecef);
+    }
+
+
+    xyz ENUtoECEF(const xyz& vel) const {
+
+        double lat = latLongAlt.lattitude * pi / 180.0;
+        double lon = latLongAlt.longitude * pi / 180.0;
+
+        double slat = std::sin(lat);
+        double clat = std::cos(lat);
+
+        double slon = std::sin(lon);
+        double clon = std::cos(lon);
+
+        return {
+            -slon*vel.x - slat*clon*vel.y + clat*clon*vel.z,
+            clon*vel.x - slat*slon*vel.y + clat*slon*vel.z,
+            clat*vel.y + slat*vel.z
+        };
+    }
+
+    //initalizes the rockets orientation upwards relative to the frame
+    void initializeOrientation() {
+
+        double lat = latLongAlt.lattitude * pi / 180.0;
+        double lon = latLongAlt.longitude * pi / 180.0;
+
+        xyz up{
+            std::cos(lat) * std::cos(lon),
+            std::cos(lat) * std::sin(lon),
+            std::sin(lat)
+        };
+
+        // Rotation from body X-axis to local up
+        xyz xAxis{1.0, 0.0, 0.0};
+
+        xyz axis = crossProduct(xAxis, up);
+
+        double dot = up.x;
+
+        // Special case: opposite directions
+        if (dot < -0.999999) {
+            orientation = {0.0, 0.0, 1.0, 0.0};
+            return;
+        }
+
+        orientation = {
+            1.0 + dot,
+            axis.x,
+            axis.y,
+            axis.z
+        };
+
+        double norm = std::sqrt(
+            orientation.w * orientation.w +
+            orientation.x * orientation.x +
+            orientation.y * orientation.y +
+            orientation.z * orientation.z
+        );
+
+        orientation.w /= norm;
+        orientation.x /= norm;
+        orientation.y /= norm;
+        orientation.z /= norm;
+    }
+
+
+    //Convert the ECEF coordinates into cartesian ones for the calculations
     void getInitialPos() {
-        std::cout << "What is the rockets x-coordniate (meters): ";
-        std::cin >> initialPos.x;
-        std::cout << "What is the rockets y-coordniate (meters): ";
-        std::cin >> initialPos.y;
-        std::cout << "What is the rockets z-coordniate (meters): ";
-        std::cin >> initialPos.z;
+
+        xyz initialECEF = geographicToECEF();
+
+        //initalize the initla position with the cartesian location
+        initialPos = ECEFtoECI(initialECEF, 0.0);
 
         currentPos = initialPos;
+
         pos.push_back(initialPos);
     }
 
+
     void getInitialVel() {
-        std::cout << "What is the rockets x-vel (m/s): ";
-        std::cin >> initialVel.x;
-        std::cout << "What is the rockets y-vel (m/s): ";
-        std::cin >> initialVel.y;
-        std::cout << "What is the rockets z-vel (m/s): ";
-        std::cin >> initialVel.z;
+
+        xyz velocityENU;
+
+
+        std::cout << "What is the rockets x-vel east (m/s): ";
+        std::cin >> velocityENU.x;
+        std::cout << "What is the rockets y-vel north (m/s): ";
+        std::cin >> velocityENU.y;
+        std::cout << "What is the rockets z-vel up (m/s): ";
+        std::cin >> velocityENU.z;
+
+        xyz velocityECEF = ENUtoECEF(velocityENU);
+
+        //converting rotating-earth velocity into ECI
+        constexpr double omega = 7.2921159e-5;
+
+        xyz earthRotationVelocity{
+            -omega * initialPos.y,
+            omega * initialPos.x,
+            0.0
+        };
+
+        initialVel = {
+            velocityECEF.x + earthRotationVelocity.x,
+            velocityECEF.y + earthRotationVelocity.y,
+            velocityECEF.z + earthRotationVelocity.z
+        };
 
         currentVel = initialVel;
         vel.push_back(initialVel);
     }
+
+
+    xyz getRelativeAirVelocity() const {
+
+        constexpr double omega = 7.2921159e-5;
+
+        xyz atmosphericVelocity{
+            -omega * currentPos.y,
+            omega * currentPos.x,
+            0.0
+        };
+
+        return {
+            currentVel.x - atmosphericVelocity.x,
+            currentVel.y - atmosphericVelocity.y,
+            currentVel.z - atmosphericVelocity.z
+        };
+    }
+
 
 
     //Compute dynamic surface area of the rocket as a function of its orientation
@@ -234,7 +509,9 @@ class rocket {
     aero calculateAerodynamics(double rho) const {
 
         // Rocket velocity in body coordinates
-        xyz velBody = worldToBody(currentVel);
+        xyz relativeVel = getRelativeAirVelocity();
+
+        xyz velBody = worldToBody(relativeVel);
 
         // Velocity at center of pressure
         xyz rotationVel = crossProduct(angularVelocity, cpOffset);
@@ -375,48 +652,55 @@ class rocket {
 
         while (true) {
 
-            //  1) Get gravity and air density as function of altitude
-            double gravity = e.getGravity(currentPos.z);
-            double rho = e.getAirDensity(currentPos.z);
+            //  1) current geographic pos
+            geographicPos geo = getCurrentGeographicPos();
 
-            //  2) Get aerodynamic forces as function of density (USE 0.8 as Cd for now until we get accurate dynamic estimates)
+            //  2) atmospherix properties
+            double rho = e.getAirDensity(geo.altitude);
+
+            //  3) Gravity accel in ECI
+            xyz gravity = e.getGravity(currentPos);
+
+            // 4) aerodynamic forces and torques
             aero aerodynamic = calculateAerodynamics(rho);
             torque = aerodynamic.torque;
 
-            //  3) Translational accel
+
+            //  5) Translational accel
             xyz accel {
-                aerodynamic.force.x / mass,
-                aerodynamic.force.y / mass,
-                aerodynamic.force.z / mass - gravity
+                aerodynamic.force.x / mass + gravity.x,
+                aerodynamic.force.y / mass + gravity.y,
+                aerodynamic.force.z / mass + gravity.z
             };
 
-            // 4) Rotational Accel
+            //  6) rotational accel
             calculateAngularAccel();
 
-
-            //  5) Update vel
+            //  7) update velocities
             currentVel.x += accel.x * dt;
             currentVel.y += accel.y * dt;
             currentVel.z += accel.z * dt;
             updateAngularrVel(dt);
 
-            //  6) Update pos + orientation
+            //  8) update pos
             currentPos.x += currentVel.x * dt;
             currentPos.y += currentVel.y * dt;
             currentPos.z += currentVel.z * dt;
+
+            //  9) Update orientation
             updateOrientation(dt);
 
-            //  7) store updated state
+            //  10) update sim time
+            currentTime += dt;
+
+            //  11) Store state
             vel.push_back(currentVel);
             pos.push_back(currentPos);
             angularVel.push_back(angularVelocity);
             orientations.push_back(orientation);
 
-            //Run sim until altitude is 0
-            if (currentPos.z < 0.001) {
-                currentPos.z = 0;
-
-                pos.back() = currentPos;
+            //  12) Check if we've hit the groun
+            if (geo.altitude <= 0.0) {
                 break;
             }
         }
@@ -430,29 +714,35 @@ class rocket {
             return;
         }
 
-        file << "time,x,y,z,vx,vy,vz,p,q,r,qw,qx,qy,qz\n";
+        file << std::setprecision(15);
+
+        file << "time,x,y,z,altitude,vx,vy,vz,p,q,r,qw,qx,qy,qz\n";;
 
         //Iterates through pos and vel every second and writes to csv
         auto writeRow = [&](size_t i) {
-            double time = i*dt;
+            double time = i * dt;
+
+            // Convert the stored ECI position to ECEF at this timestep
+            xyz ecef = ECItoECEF(pos[i], time);
+
+            // Get the latitude, longitude, and altitude for this position
+            geographicPos geo = ECEFtoGeographic(ecef);
 
             file << time << ","
-             << pos[i].x << ","
-             << pos[i].y << ","
-             << pos[i].z << ","
-
-             << vel[i].x << ","
-             << vel[i].y << ","
-             << vel[i].z << ","
-             
-             << angularVel[i].x << ","
-             << angularVel[i].y << ","
-             << angularVel[i].z << ","
-             
-             << orientations[i].w << ","
-             << orientations[i].x << ","
-             << orientations[i].y << ","
-             << orientations[i].z << "\n";
+                << pos[i].x << ","
+                << pos[i].y << ","
+                << pos[i].z << ","
+                << geo.altitude << ","
+                << vel[i].x << ","
+                << vel[i].y << ","
+                << vel[i].z << ","
+                << angularVel[i].x << ","
+                << angularVel[i].y << ","
+                << angularVel[i].z << ","
+                << orientations[i].w << ","
+                << orientations[i].x << ","
+                << orientations[i].y << ","
+                << orientations[i].z << "\n";
         };
 
          // Export every second
@@ -478,10 +768,14 @@ int main() {
     rocket r;
     earth e;
 
+    r.getGeographicPos();
+    r.initializeOrientation();
     r.getInitialPos();
     r.getInitialVel();
 
     r.updateState(e);
+
+    
 
     //current position
     for (size_t i = 0; i<r.pos.size(); i+=100) {
@@ -509,6 +803,8 @@ int main() {
 //           4 vertical regions which i can use to interpolate airpressure and wind based on rockets current xy (lat/long) pos. Only
 //           request another call if the xy pos of the rocket moves beyond the grid formed by the 4 vertical regions. This way, we are
 //           consistently using accurate data across the calculations.
+
+//NEXT STEP: Implement dynamic CoP calculations relative to the acngle of attach
 
 // Does not assume a change in angle of attack for now (trjectory planning will come in the future)
 //---------------------------------------------------------
