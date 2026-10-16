@@ -58,6 +58,11 @@ class rocket {
         double z{0.0};
     };
 
+    struct aero {
+        xyz force{};
+        xyz torque{};
+    };
+
     //Implement a helper function for computing cross product
     xyz crossProduct(const xyz& a, const xyz& b) const {
 
@@ -105,10 +110,7 @@ class rocket {
 
     //initializes orientation in the upward position
     quaternion orientation{
-        std::cos(85.0 * pi / 360.0),
-        0.0,
-        -std::sin(85.0 * pi / 360.0),
-        0.0
+        std::sqrt(0.5), 0.0, -std::sqrt(0.5), 0.0
     };
 
     //innitalize moment of inertia in roll, pitch, and yaw
@@ -198,22 +200,94 @@ class rocket {
         vel.push_back(initialVel);
     }
 
-    //This calculates drag as a vector
-    auto getDrag(double rho, double Cd) {
-        xyz drag{};
 
-        double speed = sqrt(currentVel.x * currentVel.x +
-                            currentVel.y * currentVel.y +
-                            currentVel.z * currentVel.z);
+    //Compute dynamic surface area of the rocket as a function of its orientation
+    //This way, drag is realisticlly calculated as the attitude of the rocket changes
+    double calculateProjectedArea(const xyz& relativeBody) const {
 
-        double dragFactor = -0.5 * rho * Cd * frontArea * speed;
+        double speed = std::sqrt(
+            relativeBody.x * relativeBody.x +
+            relativeBody.y * relativeBody.y +
+            relativeBody.z * relativeBody.z
+        );
 
-        drag.x = dragFactor * currentVel.x;
-        drag.y = dragFactor * currentVel.y;
-        drag.z = dragFactor * currentVel.z;
+        if (speed < 1e-8) {
+            return frontArea;
+        }
 
-        return drag;
+        double axialVelocity = std::abs(relativeBody.x);
+
+        double lateralVelocity = std::sqrt(
+            relativeBody.y * relativeBody.y + 
+            relativeBody.z * relativeBody.z
+        );
+
+        double sideArea = length * diameter;
+
+        double projectedArea = frontArea * axialVelocity / speed + sideArea * lateralVelocity / speed;
+
+        return projectedArea;
     }
+
+    //This calculates drag as a vector
+    // Calculate aerodynamic drag using orientation-dependent projected area
+    aero calculateAerodynamics(double rho) const {
+
+        // Rocket velocity in body coordinates
+        xyz velBody = worldToBody(currentVel);
+
+        // Velocity at center of pressure
+        xyz rotationVel = crossProduct(angularVelocity, cpOffset);
+
+        xyz cpVelocity{
+            velBody.x + rotationVel.x,
+            velBody.y + rotationVel.y,
+            velBody.z + rotationVel.z
+        };
+
+        double lateralSpeed = std::sqrt(
+            cpVelocity.y * cpVelocity.y +
+            cpVelocity.z * cpVelocity.z
+        );
+
+        double axialArea = frontArea;
+        double lateralArea = length * diameter;
+
+        // Temporary aerodynamic coefficients
+        double CdAxial = 0.8;
+        double CdLateral = 1.1;
+
+        // Axial aerodynamic resistance
+        double axialForce =
+            -0.5 * rho * CdAxial * axialArea
+            * std::abs(velBody.x) * velBody.x;
+
+        // Lateral aerodynamic resistance
+        xyz lateralForce{
+            0.0,
+            -0.5 * rho * CdLateral * lateralArea
+                * lateralSpeed * cpVelocity.y,
+
+            -0.5 * rho * CdLateral * lateralArea
+                * lateralSpeed * cpVelocity.z
+        };
+
+        // Total aerodynamic force in body coordinates
+        xyz forceBody{
+            axialForce,
+            lateralForce.y,
+            lateralForce.z
+        };
+
+        // Aerodynamic torque about center of mass
+        xyz torqueBody = crossProduct(cpOffset, lateralForce);
+
+        return {
+            bodyToWorld(forceBody),
+            torqueBody
+        };
+    }
+
 
     // Moment of inertia for pitch and yaw axis
     double getInertiaPY() {
@@ -291,41 +365,7 @@ class rocket {
 
     // Calculates the aerodynamic normal force based on the rocket's
     // orientation, translational velocity, and angular velocity.
-    xyz getNormalForce(double rho) {
 
-        // Relative velocity in body coordinates
-        xyz relativeVelBody = worldToBody(currentVel);
-
-        // Velocity at CP caused by angular rotation
-        xyz rotationVel = crossProduct(angularVelocity, cpOffset);
-
-        xyz cpVelocity{
-            relativeVelBody.x + rotationVel.x,
-            relativeVelBody.y + rotationVel.y,
-            relativeVelBody.z + rotationVel.z
-        };
-
-        double speed = std::sqrt(
-            cpVelocity.x * cpVelocity.x +
-            cpVelocity.y * cpVelocity.y +
-            cpVelocity.z * cpVelocity.z
-        );
-
-        if (speed < 1e-8) {
-            return {};
-        }
-
-        double dynamicPressure = 0.5 * rho * speed * speed;
-
-        double forceFactor =
-            -dynamicPressure * frontArea * normalForceSlope / speed;
-
-        return {
-            0.0,
-            forceFactor * cpVelocity.y,
-            forceFactor * cpVelocity.z
-        };
-    }
 
 
     void updateState(const earth& e) {
@@ -340,19 +380,19 @@ class rocket {
             double rho = e.getAirDensity(currentPos.z);
 
             //  2) Get aerodynamic forces as function of density (USE 0.8 as Cd for now until we get accurate dynamic estimates)
-            xyz drag = getDrag(rho, 0.8);
-            xyz normalForceBody = getNormalForce(rho);
-            xyz normalForceWorld = bodyToWorld(normalForceBody);
+            aero aerodynamic = calculateAerodynamics(rho);
+            torque = aerodynamic.torque;
 
-            //  3) Get aerodynamic torque
-            calcAeroTorque(normalForceBody);
+            //  3) Translational accel
+            xyz accel {
+                aerodynamic.force.x / mass,
+                aerodynamic.force.y / mass,
+                aerodynamic.force.z / mass - gravity
+            };
 
-            // 4) Get accel
-            xyz accel{};
-            accel.x = (drag.x + normalForceWorld.x) / mass;
-            accel.y = (drag.y + normalForceWorld.y) / mass;
-            accel.z = (drag.z + normalForceWorld.z) / mass - gravity;
+            // 4) Rotational Accel
             calculateAngularAccel();
+
 
             //  5) Update vel
             currentVel.x += accel.x * dt;
@@ -360,7 +400,7 @@ class rocket {
             currentVel.z += accel.z * dt;
             updateAngularrVel(dt);
 
-            //  6) Update pos
+            //  6) Update pos + orientation
             currentPos.x += currentVel.x * dt;
             currentPos.y += currentVel.y * dt;
             currentPos.z += currentVel.z * dt;
